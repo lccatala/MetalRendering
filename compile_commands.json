@@ -1,0 +1,20 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/clang++",
+      "-DDEBUG",
+      "-I/usr/local/include",
+      "-Ivendor/metal-cpp",
+      "-Ivendor/metal-cpp-extensions",
+      "-g",
+      "-std=c++20",
+      "-c",
+      "-o",
+      "obj/Debug/main.o",
+      "Core/src/main.cpp"
+    ],
+    "directory": "/Users/luis/Projects/Metal",
+    "file": "/Users/luis/Projects/Metal/Core/src/main.cpp",
+    "output": "/Users/luis/Projects/Metal/obj/Debug/main.o"
+  }
+]
