@@ -123,12 +123,112 @@ Renderer::Renderer(MTL::Device* device)
     : m_Device(device->retain())
 {
     m_CommandQueue = m_Device->newCommandQueue();
+    BuildShaders();
+    BuildBuffers();
 }
 
 Renderer::~Renderer()
 {
     m_CommandQueue->release();
     m_Device->release();
+}
+
+std::string Renderer::ReadFile(const std::string& filepath)
+{
+    std::string result;
+
+    std::ifstream file(filepath, std::ios::in);
+    if (!file)
+    {
+        __builtin_printf("File %s not found", filepath.c_str());
+        assert(false);
+    }
+    else
+    {
+        file.seekg(0, std::ios::end); // Pointing at the end of the file
+        result.resize(file.tellg()); // Resize output string to file size
+        file.seekg(0, std::ios::beg); // Move to the beggining of the file
+        file.read(&result[0], result.size());
+        file.close();
+    }
+
+    return result;
+}
+
+void Renderer::BuildShaders() 
+{
+    using NS::StringEncoding::UTF8StringEncoding;
+
+    const std::string shaderSrc = ReadFile("Core/resources/shader.metal");
+    NS::Error* error = nullptr;
+    MTL::Library* library = m_Device->newLibrary(
+            NS::String::string(shaderSrc.c_str(), UTF8StringEncoding), 
+            nullptr,
+            &error
+            );
+    if (!library) 
+    {
+        __builtin_printf("%s", error->localizedDescription()->utf8String());
+        assert(false);
+    }
+
+    MTL::Function* vertexFunction = library->newFunction(
+            NS::String::string("vertexMain", UTF8StringEncoding));
+    MTL::Function* fragmentFunction = library->newFunction(
+            NS::String::string("fragmentMain", UTF8StringEncoding));
+
+    MTL::RenderPipelineDescriptor* descriptor =
+        MTL::RenderPipelineDescriptor::alloc()->init();
+    descriptor->setVertexFunction(vertexFunction);
+    descriptor->setFragmentFunction(fragmentFunction);
+    descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
+
+    m_RenderPipelineState = m_Device->newRenderPipelineState(descriptor, &error);
+    if (!m_RenderPipelineState)
+    {
+        __builtin_printf("%s", error->localizedDescription()->utf8String());
+        assert(false);
+    }
+
+    vertexFunction->release();
+    fragmentFunction->release();
+    descriptor->release();
+    library->release();
+}
+
+void Renderer::BuildBuffers()
+{
+    const size_t numVertices = 3;
+
+    simd::float3 positions[numVertices] = {
+        { -0.8f,  0.8f, 0.0f },
+        {  0.0f, -0.8f, 0.0f },
+        {  0.8f,  0.8f, 0.0f }
+    };
+
+    simd::float3 colors[numVertices] = {
+        { 1.0f, 0.3f, 0.2f },
+        { 0.8f, 1.0f, 0.0f },
+        { 0.8f, 0.0f, 1.0f }
+    };
+
+    constexpr size_t dataSize = numVertices * sizeof(simd::float3);
+
+    MTL::Buffer* vertexPositionsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
+    MTL::Buffer* vertexColorsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
+
+    // TODO: This is how they do it in the official sample code,
+    // try assigning directly to the class members
+    m_VertexPositionsBuffer = vertexPositionsBuffer;
+    m_VertexColorsBuffer = vertexColorsBuffer;
+
+    memcpy(m_VertexPositionsBuffer->contents(), positions, dataSize);
+    memcpy(m_VertexColorsBuffer->contents(), colors, dataSize);
+
+    m_VertexPositionsBuffer->didModifyRange(
+            NS::Range::Make(0, m_VertexPositionsBuffer->length()));
+    m_VertexColorsBuffer->didModifyRange(
+            NS::Range::Make(0, m_VertexColorsBuffer->length()));
 }
 
 void Renderer::Draw(MTK::View* view)
@@ -138,6 +238,15 @@ void Renderer::Draw(MTK::View* view)
     MTL::CommandBuffer* commandBuffer = m_CommandQueue->commandBuffer();
     MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
+
+    encoder->setRenderPipelineState(m_RenderPipelineState);
+    encoder->setVertexBuffer(m_VertexPositionsBuffer, 0, 0);
+    encoder->setVertexBuffer(m_VertexColorsBuffer, 0, 1);
+    encoder->drawPrimitives(
+            MTL::PrimitiveType::PrimitiveTypeTriangle,
+            NS::UInteger(0),
+            NS::UInteger(3));
+
     encoder->endEncoding();
     commandBuffer->presentDrawable(view->currentDrawable());
     commandBuffer->commit();

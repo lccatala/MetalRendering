@@ -1,20 +1,28 @@
 #pragma once
-#define NS_PRIVATE_IMPLEMENTATION
-#define CA_PRIVATE_IMPLEMENTATION
-#define MTL_PRIVATE_IMPLEMENTATION
-#define MTK_PRIVATE_IMPLEMENTATION
 
 #include <Metal/Metal.hpp>
 #include <MetalKit/MetalKit.hpp>
+
+#include <simd/simd.h>
+#include <fstream>
+#include <string>
+#include <cassert>
+
 class Renderer
 {
     public:
         Renderer(MTL::Device* device);
         ~Renderer();
+        void BuildShaders();
+        void BuildBuffers();
         void Draw(MTK::View* view);
     private:
+        std::string ReadFile(const std::string& filepath);
         MTL::Device* m_Device;
         MTL::CommandQueue* m_CommandQueue;
+        MTL::RenderPipelineState* m_RenderPipelineState;
+        MTL::Buffer* m_VertexPositionsBuffer;
+        MTL::Buffer* m_VertexColorsBuffer;
 };
 
 class MyMTKViewDelegate : public MTK::ViewDelegate 
