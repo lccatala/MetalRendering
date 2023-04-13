@@ -129,6 +129,11 @@ Renderer::Renderer(MTL::Device* device)
 
 Renderer::~Renderer()
 {
+    m_ShaderLibrary->release();
+    m_ArgBuffer->release();
+    m_VertexPositionsBuffer->release();
+    m_VertexColorsBuffer->release();
+    m_RenderPipelineState->release();
     m_CommandQueue->release();
     m_Device->release();
 }
@@ -193,7 +198,7 @@ void Renderer::BuildShaders()
     vertexFunction->release();
     fragmentFunction->release();
     descriptor->release();
-    library->release();
+    m_ShaderLibrary = library;
 }
 
 void Renderer::BuildBuffers()
@@ -229,6 +234,27 @@ void Renderer::BuildBuffers()
             NS::Range::Make(0, m_VertexPositionsBuffer->length()));
     m_VertexColorsBuffer->didModifyRange(
             NS::Range::Make(0, m_VertexColorsBuffer->length()));
+
+    using NS::StringEncoding::UTF8StringEncoding;
+    
+    assert(m_ShaderLibrary);
+
+    MTL::Function* vertexFunction = m_ShaderLibrary->newFunction(
+            NS::String::string("vertexMain", UTF8StringEncoding));
+    MTL::ArgumentEncoder* argEncoder = vertexFunction->newArgumentEncoder(0);
+    MTL::Buffer* argBuffer = m_Device->newBuffer(
+            argEncoder->encodedLength(),
+            MTL::ResourceStorageModeManaged);
+    m_ArgBuffer = argBuffer; // TODO: why not set it up directly on the member??
+
+    argEncoder->setArgumentBuffer(m_ArgBuffer, 0);
+    argEncoder->setBuffer(m_VertexPositionsBuffer, 0, 0);
+    argEncoder->setBuffer(m_VertexColorsBuffer, 0, 1);
+
+    m_ArgBuffer->didModifyRange(NS::Range::Make(0, m_ArgBuffer->length()));
+
+    vertexFunction->release();
+    argEncoder->release();
 }
 
 void Renderer::Draw(MTK::View* view)
@@ -240,8 +266,9 @@ void Renderer::Draw(MTK::View* view)
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
 
     encoder->setRenderPipelineState(m_RenderPipelineState);
-    encoder->setVertexBuffer(m_VertexPositionsBuffer, 0, 0);
-    encoder->setVertexBuffer(m_VertexColorsBuffer, 0, 1);
+    encoder->setVertexBuffer(m_ArgBuffer, 0, 0);
+    encoder->useResource(m_VertexPositionsBuffer, MTL::ResourceUsageRead);
+    encoder->useResource(m_VertexColorsBuffer, MTL::ResourceUsageRead);
     encoder->drawPrimitives(
             MTL::PrimitiveType::PrimitiveTypeTriangle,
             NS::UInteger(0),

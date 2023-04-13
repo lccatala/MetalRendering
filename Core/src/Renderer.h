@@ -18,9 +18,12 @@ class Renderer
         void Draw(MTK::View* view);
     private:
         std::string ReadFile(const std::string& filepath);
+
         MTL::Device* m_Device;
         MTL::CommandQueue* m_CommandQueue;
+        MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
+        MTL::Buffer* m_ArgBuffer;
         MTL::Buffer* m_VertexPositionsBuffer;
         MTL::Buffer* m_VertexColorsBuffer;
 };

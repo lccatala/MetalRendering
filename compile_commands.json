@@ -10,11 +10,11 @@
       "-std=c++20",
       "-c",
       "-o",
-      "obj/Debug/main.o",
-      "Core/src/main.cpp"
+      "obj/Debug/Renderer.o",
+      "Core/src/Renderer.cpp"
     ],
     "directory": "/Users/luis/Projects/Metal",
-    "file": "/Users/luis/Projects/Metal/Core/src/main.cpp",
-    "output": "/Users/luis/Projects/Metal/obj/Debug/main.o"
+    "file": "/Users/luis/Projects/Metal/Core/src/Renderer.cpp",
+    "output": "/Users/luis/Projects/Metal/obj/Debug/Renderer.o"
   }
 ]
