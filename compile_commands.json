@@ -6,15 +6,16 @@
       "-I/usr/local/include",
       "-Ivendor/metal-cpp",
       "-Ivendor/metal-cpp-extensions",
+      "-Ivendor/tiny_obj_loader",
       "-g",
       "-std=c++20",
       "-c",
       "-o",
-      "obj/Debug/Renderer.o",
-      "Core/src/Renderer.cpp"
+      "obj/Debug/Model.o",
+      "Core/src/Model.cpp"
     ],
     "directory": "/Users/luis/Projects/Metal",
-    "file": "/Users/luis/Projects/Metal/Core/src/Renderer.cpp",
-    "output": "/Users/luis/Projects/Metal/obj/Debug/Renderer.o"
+    "file": "/Users/luis/Projects/Metal/Core/src/Model.cpp",
+    "output": "/Users/luis/Projects/Metal/obj/Debug/Model.o"
   }
 ]

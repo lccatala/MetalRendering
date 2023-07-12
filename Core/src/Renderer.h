@@ -1,12 +1,7 @@
 #pragma once
 
-#include <Metal/Metal.hpp>
-#include <MetalKit/MetalKit.hpp>
+#include "Model.h"
 
-#include <simd/simd.h>
-#include <fstream>
-#include <string>
-#include <cassert>
 
 class Renderer
 {
@@ -24,8 +19,11 @@ class Renderer
         MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
         MTL::Buffer* m_ArgBuffer;
-        MTL::Buffer* m_VertexPositionsBuffer;
-        MTL::Buffer* m_VertexColorsBuffer;
+        MTL::Buffer* m_VerticesBuffer;
+
+
+        std::unique_ptr<Model> m_Model;
+
 };
 
 class MyMTKViewDelegate : public MTK::ViewDelegate 

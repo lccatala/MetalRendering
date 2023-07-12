@@ -4,16 +4,21 @@ workspace "Metal"
    flags { "MultiProcessorCompile" }
    toolset ("clang")
 
+   -- pchheader "Core/src/PreCompiledHeader.h"
+   -- pchsource "Core/src/PreCompiledHeader.cpp"
+
    defines {
        -- "NS_PRIVATE_IMPLEMENTATION",
        -- "CA_PRIVATE_IMPLEMENTATION",
-       -- "MTL_PRIVATE_IMPLEMENTATION"
+       -- "MTL_PRIVATE_IMPLEMENTATION",
+       -- "MTK_PRIVATE_IMPLEMENTATION"
    }
 
    includedirs {
        "/usr/local/include",
        "vendor/metal-cpp",
        "vendor/metal-cpp-extensions",
+       "vendor/tiny_obj_loader",
    }
 
    headerdir "vendor/metal-cpp"
@@ -40,6 +45,7 @@ project "Core"
    files { 
        "*.cpp",
        "%{prj.name}/src/**.h",
+       "%{prj.name}/src/**.hpp",
        "%{prj.name}/src/**.cpp",
    }
 

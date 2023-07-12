@@ -2,10 +2,6 @@
 #define MTL_PRIVATE_IMPLEMENTATION
 #define MTK_PRIVATE_IMPLEMENTATION
 #define CA_PRIVATE_IMPLEMENTATION
-#include "MetalKit/MTKView.hpp"
-#include <Foundation/Foundation.hpp>
-#include <AppKit/AppKit.hpp>
-
 #include "Renderer.h"
 
 
