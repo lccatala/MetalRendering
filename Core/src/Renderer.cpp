@@ -1,5 +1,4 @@
 #include "Renderer.h"
-#include <fstream>
 
 MyAppDelegate::~MyAppDelegate()
 {
@@ -84,9 +83,8 @@ void MyAppDelegate::applicationDidFinishLaunching(NS::Notification* notification
 
     m_View = MTK::View::alloc()->init(frame, m_Device);
     m_View->setColorPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
-    m_View->setClearColor(MTL::ClearColor::Make(0.2, 0.6, 0.8, 1.0));
+    m_View->setClearColor(MTL::ClearColor::Make(0.2, 0.1, 0.8, 1.0));
 
-    // Set a delegate object to issue commands to Metal
     m_ViewDelegate = new MyMTKViewDelegate(m_Device);
     m_View->setDelegate(m_ViewDelegate);
 
@@ -122,18 +120,27 @@ void MyMTKViewDelegate::drawInMTKView(MTK::View* view)
 }
 
 Renderer::Renderer(MTL::Device* device)
-    : m_Device(device->retain())
+    : m_Device(device->retain()), m_Angle(0.0f), m_Frame(0)
 {
     m_CommandQueue = m_Device->newCommandQueue();
+
     BuildShaders();
     BuildBuffers();
+    BuildFrameData();
+
+    m_Semaphore = dispatch_semaphore_create(m_MaxFramesInFlight);
 }
 
 Renderer::~Renderer()
 {
     m_ShaderLibrary->release();
     m_ArgBuffer->release();
-    m_VerticesBuffer->release();
+    m_VertexPositionsBuffer->release();
+    m_VertexColorsBuffer->release();
+    for (int i = 0; i < m_MaxFramesInFlight; ++i)
+    {
+        m_FrameData[i]->release();
+    }
     m_RenderPipelineState->release();
     m_CommandQueue->release();
     m_Device->release();
@@ -178,19 +185,16 @@ void Renderer::BuildShaders()
         assert(false);
     }
 
-    // One object per function in the library (shader)
-    MTL::Function* vertexFunction   = library->newFunction(NS::String::string("vertexShader",   UTF8StringEncoding));
-    MTL::Function* fragmentFunction = library->newFunction(NS::String::string("fragmentShader", UTF8StringEncoding));
+    MTL::Function* vertexFunction = library->newFunction(
+            NS::String::string("vertexMain", UTF8StringEncoding));
+    MTL::Function* fragmentFunction = library->newFunction(
+            NS::String::string("fragmentMain", UTF8StringEncoding));
 
-    // Use the RenderPipelineDescriptor to configure render pipeline states
-    MTL::RenderPipelineDescriptor* descriptor = MTL::RenderPipelineDescriptor::alloc()->init();
+    MTL::RenderPipelineDescriptor* descriptor =
+        MTL::RenderPipelineDescriptor::alloc()->init();
     descriptor->setVertexFunction(vertexFunction);
     descriptor->setFragmentFunction(fragmentFunction);
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
-
-    // When creating a render pipeline state, it's configured to convert the fragment shader's 
-    // output into the render target's pixel format. If we wanted to use another pixel format, 
-    // we'd have to create a different pipeline state object. Shaders can be reused between state objects.
 
     m_RenderPipelineState = m_Device->newRenderPipelineState(descriptor, &error);
     if (!m_RenderPipelineState)
@@ -207,29 +211,53 @@ void Renderer::BuildShaders()
 
 void Renderer::BuildBuffers()
 {
-    /* const size_t numVertices = 3; */
+    const size_t numVertices = 3;
 
+    simd::float3 positions[numVertices] = {
+        { -0.8f,  0.8f, 0.0f },
+        {  0.0f, -0.8f, 0.0f },
+        {  0.8f,  0.8f, 0.0f }
+    };
 
-    NS::Error* error = nullptr;
-    NS::String* texturePath = NS::String::string("Core/resources/viking_room.png", NS::UTF8StringEncoding);
-    NS::String* modelPath= NS::String::string("Core/resources/viking_room.obj", NS::UTF8StringEncoding);
-    m_Model = std::make_unique<Model>(m_Device, texturePath, modelPath->utf8String());
+    simd::float3 colors[numVertices] = {
+        { 1.0f, 0.3f, 0.2f },
+        { 0.8f, 1.0f, 0.0f },
+        { 0.8f, 0.0f, 1.0f }
+    };
 
-    size_t dataSize = m_Model->Vertices.size() * sizeof(Vertex);
-    m_VerticesBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
-    memcpy(m_VerticesBuffer->contents(), m_Model->Vertices.data(), dataSize);
-    m_VerticesBuffer->didModifyRange(NS::Range::Make(0, m_VerticesBuffer->length()));
+    constexpr size_t dataSize = numVertices * sizeof(simd::float3);
+
+    MTL::Buffer* vertexPositionsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
+    MTL::Buffer* vertexColorsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
+
+    // TODO: This is how they do it in the official sample code,
+    // try assigning directly to the class members
+    m_VertexPositionsBuffer = vertexPositionsBuffer;
+    m_VertexColorsBuffer = vertexColorsBuffer;
+
+    memcpy(m_VertexPositionsBuffer->contents(), positions, dataSize);
+    memcpy(m_VertexColorsBuffer->contents(), colors, dataSize);
+
+    m_VertexPositionsBuffer->didModifyRange(
+            NS::Range::Make(0, m_VertexPositionsBuffer->length()));
+    m_VertexColorsBuffer->didModifyRange(
+            NS::Range::Make(0, m_VertexColorsBuffer->length()));
 
     using NS::StringEncoding::UTF8StringEncoding;
     
     assert(m_ShaderLibrary);
 
-    MTL::Function* vertexFunction = m_ShaderLibrary->newFunction(NS::String::string("vertexMain", UTF8StringEncoding));
+    MTL::Function* vertexFunction = m_ShaderLibrary->newFunction(
+            NS::String::string("vertexMain", UTF8StringEncoding));
     MTL::ArgumentEncoder* argEncoder = vertexFunction->newArgumentEncoder(0);
-    m_ArgBuffer = m_Device->newBuffer(argEncoder->encodedLength(), MTL::ResourceStorageModeManaged);
+    MTL::Buffer* argBuffer = m_Device->newBuffer(
+            argEncoder->encodedLength(),
+            MTL::ResourceStorageModeManaged);
+    m_ArgBuffer = argBuffer; // TODO: why not set it up directly on the member??
 
     argEncoder->setArgumentBuffer(m_ArgBuffer, 0);
-    argEncoder->setBuffer(m_VerticesBuffer, 0, 0);
+    argEncoder->setBuffer(m_VertexPositionsBuffer, 0, 0);
+    argEncoder->setBuffer(m_VertexColorsBuffer, 0, 1);
 
     m_ArgBuffer->didModifyRange(NS::Range::Make(0, m_ArgBuffer->length()));
 
@@ -237,36 +265,47 @@ void Renderer::BuildBuffers()
     argEncoder->release();
 }
 
+struct FrameData
+{
+    float angle;
+};
+void Renderer::BuildFrameData()
+{
+    for (int i = 0; i < m_MaxFramesInFlight; ++i)
+    {
+        m_FrameData[i] = m_Device->newBuffer(sizeof(FrameData), MTL::ResourceStorageModeManaged);
+    }
+}
+
 void Renderer::Draw(MTK::View* view)
 {
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
 
+    m_Frame = (m_Frame + 1) % m_MaxFramesInFlight;
+    MTL::Buffer* frameDataBuffer = m_FrameData[m_Frame];
+
     MTL::CommandBuffer* commandBuffer = m_CommandQueue->commandBuffer();
-
-    // Describes render targets and how they should be processed at the start and end of a render pass.
-    MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor(); 
-
-    // Create render pass
+    dispatch_semaphore_wait(m_Semaphore, DISPATCH_TIME_FOREVER);
+    Renderer* renderer = this;
+    commandBuffer->addCompletedHandler(^void(MTL::CommandBuffer* commandBuffer) {
+        dispatch_semaphore_signal(renderer->m_Semaphore);
+    });
+    reinterpret_cast<FrameData*>(frameDataBuffer->contents())->angle = m_Angle += 0.01f;
+    frameDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(FrameData)));
+    MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
-    
-    // We could define a viewport, but it seems by default it just renders to the CGRect we defined earlier
-    /* MTL::Viewport viewport {0,0, 512,512, 0, 1}; */
-    /* encoder->setViewport(viewport); */
 
-    // No arguments to set for fragment, since it uses the output from the vertex stage
     encoder->setRenderPipelineState(m_RenderPipelineState);
     encoder->setVertexBuffer(m_ArgBuffer, 0, 0);
-    encoder->useResource(m_VerticesBuffer, MTL::ResourceUsageRead);
+    encoder->useResource(m_VertexPositionsBuffer, MTL::ResourceUsageRead);
+    encoder->useResource(m_VertexColorsBuffer, MTL::ResourceUsageRead);
+    encoder->setVertexBuffer(frameDataBuffer, 0, 1);
     encoder->drawPrimitives(
             MTL::PrimitiveType::PrimitiveTypeTriangle,
             NS::UInteger(0),
-            NS::UInteger(m_Model->Vertices.size()));
+            NS::UInteger(3));
+
     encoder->endEncoding();
-
-    // We could encode more commands with the same set of steps.
-    // The final image is rendered as if the commands were processed
-    // in the order they were specified, even though they might not be
-
     commandBuffer->presentDrawable(view->currentDrawable());
     commandBuffer->commit();
 

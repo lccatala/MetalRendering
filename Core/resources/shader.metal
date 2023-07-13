@@ -2,39 +2,39 @@
 
 using namespace metal;
 
-#include "../../Core/src/Vertex.h"
-
-struct RasterizedData
+struct v2f
 {
-    // The [[position]] attribute of this member indicates that this value
-    // is the clip space position of the vertex when this structure is
-    // returned from the vertex function.
     float4 position [[position]];
-
-    // Since this member does not have a special attribute, the rasterizer
-    // interpolates its value with the values of the other triangle vertices
-    // and then passes the interpolated value to the fragment shader for each
-    // fragment in the triangle.
-    float4 color;
+    half3 color;
 };
 
-vertex RasterizedData vertexShader(uint vertexID[[vertex_id]],
-                                   constant Vertex *vertices [[buffer(VertexInputIndexVertices)]],
-                                   constant vector_uint2 *viewportSizePointer [[buffer(VertexInputIndexViewportSize)]])
+struct VertexData
 {
-    RasterizedData out;
+    device float3* positions[[id(0)]];
+    device float3* colors[[id(1)]];
+};
 
-    float2 pixelSpacePosition = vertices[vertexID].Position.xy;
-    vector_float2 viewportSize = vector_float2(*viewportSizePointer);
+struct FrameData
+{
+    float angle;
+};
 
-    out.position = vector_float4(0.0, 0.0, 0.0, 1.0);
-    out.position.xy = pixelSpacePosition / (viewportSize / 2.0);
-    out.color = vertices[vertexID].Color;
-
-    return out;
+v2f vertex vertexMain(device const VertexData* vertexData [[buffer(0)]],
+                      constant FrameData* frameData [[buffer(1)]],
+                      uint                     vertexId   [[vertex_id]])
+{
+    float a = frameData->angle;
+    float3x3 rotationMatrix = float3x3(
+    sin(a), cos(a), 0.0, 
+    cos(a), -sin(a), 0.0, 
+    0.0, 0.0, 1.0);
+    v2f o;
+    o.position = float4(rotationMatrix * vertexData->positions[vertexId], 1.0);
+    o.color = half3(vertexData->colors[vertexId]);
+    return o;
 }
 
-fragment float4 fragmentShader(RasterizedData in [[stage_in]]) // Receives the same parameters that were declared in the vertex shaders output
+half4 fragment fragmentMain(v2f in [[stage_in]])
 {
-    return in.color;
+    return half4(in.color, 1.0);
 }

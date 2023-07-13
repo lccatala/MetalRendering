@@ -1,7 +1,12 @@
 #pragma once
 
-#include "Model.h"
+#include <Metal/Metal.hpp>
+#include <MetalKit/MetalKit.hpp>
 
+#include <simd/simd.h>
+#include <fstream>
+#include <string>
+#include <cassert>
 
 class Renderer
 {
@@ -10,6 +15,7 @@ class Renderer
         ~Renderer();
         void BuildShaders();
         void BuildBuffers();
+        void BuildFrameData();
         void Draw(MTK::View* view);
     private:
         std::string ReadFile(const std::string& filepath);
@@ -19,11 +25,14 @@ class Renderer
         MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
         MTL::Buffer* m_ArgBuffer;
-        MTL::Buffer* m_VerticesBuffer;
+        MTL::Buffer* m_VertexPositionsBuffer;
+        MTL::Buffer* m_VertexColorsBuffer;
 
-
-        std::unique_ptr<Model> m_Model;
-
+        MTL::Buffer* m_FrameData[3];
+        float m_Angle;
+        int m_Frame;
+        dispatch_semaphore_t m_Semaphore;
+        static const int m_MaxFramesInFlight = 3;
 };
 
 class MyMTKViewDelegate : public MTK::ViewDelegate 
