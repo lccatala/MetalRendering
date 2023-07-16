@@ -83,8 +83,9 @@ void MyAppDelegate::applicationDidFinishLaunching(NS::Notification* notification
 
     m_View = MTK::View::alloc()->init(frame, m_Device);
     m_View->setColorPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
-    m_View->setClearColor(MTL::ClearColor::Make(0.2, 0.1, 0.8, 1.0));
+    m_View->setClearColor(MTL::ClearColor::Make(0.2, 0.6, 0.8, 1.0));
 
+    // Set a delegate object to issue commands to Metal
     m_ViewDelegate = new MyMTKViewDelegate(m_Device);
     m_View->setDelegate(m_ViewDelegate);
 
@@ -185,16 +186,21 @@ void Renderer::BuildShaders()
         assert(false);
     }
 
+    // One object per function in the library (shader)
     MTL::Function* vertexFunction = library->newFunction(
             NS::String::string("vertexMain", UTF8StringEncoding));
     MTL::Function* fragmentFunction = library->newFunction(
             NS::String::string("fragmentMain", UTF8StringEncoding));
-
+    // Use the RenderPipelineDescriptor to configure render pipeline states
     MTL::RenderPipelineDescriptor* descriptor =
         MTL::RenderPipelineDescriptor::alloc()->init();
     descriptor->setVertexFunction(vertexFunction);
     descriptor->setFragmentFunction(fragmentFunction);
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
+
+    // When creating a render pipeline state, it's configured to convert the fragment shader's 
+    // output into the render target's pixel format. If we wanted to use another pixel format, 
+    // we'd have to create a different pipeline state object. Shaders can be reused between state objects.
 
     m_RenderPipelineState = m_Device->newRenderPipelineState(descriptor, &error);
     if (!m_RenderPipelineState)
@@ -292,9 +298,10 @@ void Renderer::Draw(MTK::View* view)
     });
     reinterpret_cast<FrameData*>(frameDataBuffer->contents())->angle = m_Angle += 0.01f;
     frameDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(FrameData)));
+    // Describes render targets and how they should be processed at the start and end of a render pass.
     MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
-
+    // No arguments to set for fragment, since it uses the output from the vertex stage
     encoder->setRenderPipelineState(m_RenderPipelineState);
     encoder->setVertexBuffer(m_ArgBuffer, 0, 0);
     encoder->useResource(m_VertexPositionsBuffer, MTL::ResourceUsageRead);
@@ -306,6 +313,10 @@ void Renderer::Draw(MTK::View* view)
             NS::UInteger(3));
 
     encoder->endEncoding();
+
+    // We could encode more commands with the same set of steps.
+    // The final image is rendered as if the commands were processed
+    // in the order they were specified, even though they might not be
     commandBuffer->presentDrawable(view->currentDrawable());
     commandBuffer->commit();
 
