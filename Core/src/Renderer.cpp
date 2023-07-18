@@ -129,7 +129,9 @@ Renderer::Renderer(MTL::Device* device)
     BuildBuffers();
     BuildFrameData();
 
-    m_Semaphore = dispatch_semaphore_create(m_MaxFramesInFlight);
+    // Use a semaphore to explicitly syncrhonize buffer updates
+    // This ensures the CPU isn't updating the same buffer the GPU reads from
+    m_Semaphore = dispatch_semaphore_create(k_MaxFramesInFlight);
 }
 
 Renderer::~Renderer()
@@ -138,7 +140,7 @@ Renderer::~Renderer()
     m_ArgBuffer->release();
     m_VertexPositionsBuffer->release();
     m_VertexColorsBuffer->release();
-    for (int i = 0; i < m_MaxFramesInFlight; ++i)
+    for (int i = 0; i < k_MaxFramesInFlight; ++i)
     {
         m_FrameData[i]->release();
     }
@@ -186,12 +188,13 @@ void Renderer::BuildShaders()
         assert(false);
     }
 
-    // One object per function in the library (shader)
+    // Extract one object per function from the library (shader)
     MTL::Function* vertexFunction = library->newFunction(
             NS::String::string("vertexMain", UTF8StringEncoding));
     MTL::Function* fragmentFunction = library->newFunction(
             NS::String::string("fragmentMain", UTF8StringEncoding));
-    // Use the RenderPipelineDescriptor to configure render pipeline states
+
+    // Use the RenderPipelineDescriptor to configure what shaders the render pipeline should use
     MTL::RenderPipelineDescriptor* descriptor =
         MTL::RenderPipelineDescriptor::alloc()->init();
     descriptor->setVertexFunction(vertexFunction);
@@ -201,6 +204,7 @@ void Renderer::BuildShaders()
     // When creating a render pipeline state, it's configured to convert the fragment shader's 
     // output into the render target's pixel format. If we wanted to use another pixel format, 
     // we'd have to create a different pipeline state object. Shaders can be reused between state objects.
+    // This is an expensive operation, so only do it on startup or when loading is expected.
 
     m_RenderPipelineState = m_Device->newRenderPipelineState(descriptor, &error);
     if (!m_RenderPipelineState)
@@ -226,9 +230,9 @@ void Renderer::BuildBuffers()
     };
 
     simd::float3 colors[numVertices] = {
-        { 1.0f, 0.3f, 0.2f },
-        { 0.8f, 1.0f, 0.0f },
-        { 0.8f, 0.0f, 1.0f }
+        { 1.0f, 0.0f, 0.0f },
+        { 0.0f, 1.0f, 0.0f },
+        { 0.0f, 0.0f, 1.0f }
     };
 
     constexpr size_t dataSize = numVertices * sizeof(simd::float3);
@@ -244,6 +248,7 @@ void Renderer::BuildBuffers()
     memcpy(m_VertexPositionsBuffer->contents(), positions, dataSize);
     memcpy(m_VertexColorsBuffer->contents(), colors, dataSize);
 
+    // Indicate to Metal the CPU has copied data over to the buffers
     m_VertexPositionsBuffer->didModifyRange(
             NS::Range::Make(0, m_VertexPositionsBuffer->length()));
     m_VertexColorsBuffer->didModifyRange(
@@ -261,6 +266,7 @@ void Renderer::BuildBuffers()
             MTL::ResourceStorageModeManaged);
     m_ArgBuffer = argBuffer; // TODO: why not set it up directly on the member??
 
+    // Specify destination to which the encoder writes object references
     argEncoder->setArgumentBuffer(m_ArgBuffer, 0);
     argEncoder->setBuffer(m_VertexPositionsBuffer, 0, 0);
     argEncoder->setBuffer(m_VertexColorsBuffer, 0, 1);
@@ -277,7 +283,10 @@ struct FrameData
 };
 void Renderer::BuildFrameData()
 {
-    for (int i = 0; i < m_MaxFramesInFlight; ++i)
+    // Pass 3 versions of FrameData to GPU using multiple buffers.
+    // This is typically used when passing larger ammounts of data
+    // In this case we could simply use setVertexBytes()
+    for (int i = 0; i < k_MaxFramesInFlight; ++i)
     {
         m_FrameData[i] = m_Device->newBuffer(sizeof(FrameData), MTL::ResourceStorageModeManaged);
     }
@@ -287,15 +296,23 @@ void Renderer::Draw(MTK::View* view)
 {
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
 
-    m_Frame = (m_Frame + 1) % m_MaxFramesInFlight;
+    // Use a different buffer each time to avoid race conditions between CPU and GPU
+    m_Frame = (m_Frame + 1) % k_MaxFramesInFlight;
     MTL::Buffer* frameDataBuffer = m_FrameData[m_Frame];
 
     MTL::CommandBuffer* commandBuffer = m_CommandQueue->commandBuffer();
+
+    // Force CPU to wait if the GPU hasn't finished reading the next buffer in the cycle
     dispatch_semaphore_wait(m_Semaphore, DISPATCH_TIME_FOREVER);
+
+    // The renderer receives a notification that the GPU has finished processing each command buffer via a completed handler closure
+    // (invoked by Metal)
     Renderer* renderer = this;
     commandBuffer->addCompletedHandler(^void(MTL::CommandBuffer* commandBuffer) {
         dispatch_semaphore_signal(renderer->m_Semaphore);
     });
+
+    // Overwrite buffer contents with a new value once it's safe to do so
     reinterpret_cast<FrameData*>(frameDataBuffer->contents())->angle = m_Angle += 0.01f;
     frameDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(FrameData)));
     // Describes render targets and how they should be processed at the start and end of a render pass.
@@ -303,6 +320,9 @@ void Renderer::Draw(MTK::View* view)
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
     // No arguments to set for fragment, since it uses the output from the vertex stage
     encoder->setRenderPipelineState(m_RenderPipelineState);
+
+    // Make argument buffer available in the vertex shader, since it indirectly
+    // uses the vertex buffers through the vertexData argument buffer
     encoder->setVertexBuffer(m_ArgBuffer, 0, 0);
     encoder->useResource(m_VertexPositionsBuffer, MTL::ResourceUsageRead);
     encoder->useResource(m_VertexColorsBuffer, MTL::ResourceUsageRead);

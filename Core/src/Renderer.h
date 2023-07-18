@@ -32,7 +32,7 @@ class Renderer
         float m_Angle;
         int m_Frame;
         dispatch_semaphore_t m_Semaphore;
-        static const int m_MaxFramesInFlight = 3;
+        static const int k_MaxFramesInFlight = 3;
 };
 
 class MyMTKViewDelegate : public MTK::ViewDelegate 
