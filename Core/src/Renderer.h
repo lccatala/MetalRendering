@@ -24,15 +24,21 @@ class Renderer
         MTL::CommandQueue* m_CommandQueue;
         MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
-        MTL::Buffer* m_ArgBuffer;
-        MTL::Buffer* m_VertexPositionsBuffer;
-        MTL::Buffer* m_VertexColorsBuffer;
+
+        static constexpr size_t k_NumInstances = 32;
+        MTL::Buffer* m_InstanceDataBuffer[k_NumInstances];
+        MTL::Buffer* m_VertexDataBuffer;
+        MTL::Buffer* m_IndexBuffer;
+        /* MTL::Buffer* m_ArgBuffer; */
+        /* MTL::Buffer* m_VertexPositionsBuffer; */
+        /* MTL::Buffer* m_VertexColorsBuffer; */
 
         MTL::Buffer* m_FrameData[3];
         float m_Angle;
         int m_Frame;
         dispatch_semaphore_t m_Semaphore;
-        static const int k_MaxFramesInFlight = 3;
+        static constexpr int k_MaxFramesInFlight = 3;
+
 };
 
 class MyMTKViewDelegate : public MTK::ViewDelegate 

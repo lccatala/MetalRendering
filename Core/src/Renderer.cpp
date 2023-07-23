@@ -127,7 +127,7 @@ Renderer::Renderer(MTL::Device* device)
 
     BuildShaders();
     BuildBuffers();
-    BuildFrameData();
+    /* BuildFrameData(); */
 
     // Use a semaphore to explicitly syncrhonize buffer updates
     // This ensures the CPU isn't updating the same buffer the GPU reads from
@@ -137,16 +137,28 @@ Renderer::Renderer(MTL::Device* device)
 Renderer::~Renderer()
 {
     m_ShaderLibrary->release();
-    m_ArgBuffer->release();
-    m_VertexPositionsBuffer->release();
-    m_VertexColorsBuffer->release();
+    m_VertexDataBuffer->release();
+    /* m_ArgBuffer->release(); */
+    /* m_VertexPositionsBuffer->release(); */
+    /* m_VertexColorsBuffer->release(); */
     for (int i = 0; i < k_MaxFramesInFlight; ++i)
     {
-        m_FrameData[i]->release();
+        /* m_FrameData[i]->release(); */
+        m_InstanceDataBuffer[i]->release();
     }
+    m_IndexBuffer->release();
     m_RenderPipelineState->release();
     m_CommandQueue->release();
     m_Device->release();
+}
+
+namespace ShaderTypes
+{
+    struct InstanceData
+    {
+        simd::float4x4 InstanceTransform;
+        simd::float4 InstanceColor;
+    };
 }
 
 std::string Renderer::ReadFile(const std::string& filepath)
@@ -221,60 +233,44 @@ void Renderer::BuildShaders()
 
 void Renderer::BuildBuffers()
 {
-    const size_t numVertices = 3;
+    using simd::float3;
 
-    simd::float3 positions[numVertices] = {
-        { -0.8f,  0.8f, 0.0f },
-        {  0.0f, -0.8f, 0.0f },
-        {  0.8f,  0.8f, 0.0f }
+    const float s = 0.5f;
+
+    float3 verts[] = {
+        { -s, -s, +s },
+        { +s, -s, +s },
+        { +s, +s, +s },
+        { -s, +s, +s }
     };
 
-    simd::float3 colors[numVertices] = {
-        { 1.0f, 0.0f, 0.0f },
-        { 0.0f, 1.0f, 0.0f },
-        { 0.0f, 0.0f, 1.0f }
+    uint16_t indices[] = {
+        0, 1, 2,
+        2, 3, 0
     };
 
-    constexpr size_t dataSize = numVertices * sizeof(simd::float3);
+    const size_t vertexDataSize = sizeof(verts);
+    const size_t indexDataSize  = sizeof(indices);
 
-    MTL::Buffer* vertexPositionsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
-    MTL::Buffer* vertexColorsBuffer = m_Device->newBuffer(dataSize, MTL::ResourceStorageModeManaged);
+    MTL::Buffer* vertexBuffer = m_Device->newBuffer(vertexDataSize, MTL::ResourceStorageModeManaged);
+    MTL::Buffer* indexBuffer = m_Device->newBuffer(indexDataSize, MTL::ResourceStorageModeManaged);
 
-    // TODO: This is how they do it in the official sample code,
-    // try assigning directly to the class members
-    m_VertexPositionsBuffer = vertexPositionsBuffer;
-    m_VertexColorsBuffer = vertexColorsBuffer;
+    m_VertexDataBuffer = vertexBuffer;
+    m_IndexBuffer = indexBuffer;
 
-    memcpy(m_VertexPositionsBuffer->contents(), positions, dataSize);
-    memcpy(m_VertexColorsBuffer->contents(), colors, dataSize);
+    memcpy(m_VertexDataBuffer->contents(), verts, vertexDataSize);
+    memcpy(m_IndexBuffer->contents(), indices, indexDataSize);
 
-    // Indicate to Metal the CPU has copied data over to the buffers
-    m_VertexPositionsBuffer->didModifyRange(
-            NS::Range::Make(0, m_VertexPositionsBuffer->length()));
-    m_VertexColorsBuffer->didModifyRange(
-            NS::Range::Make(0, m_VertexColorsBuffer->length()));
+    m_VertexDataBuffer->didModifyRange(NS::Range::Make(0, m_VertexDataBuffer->length()));
+    m_IndexBuffer->didModifyRange(NS::Range::Make(0, m_IndexBuffer->length()));
 
-    using NS::StringEncoding::UTF8StringEncoding;
-    
-    assert(m_ShaderLibrary);
+    const size_t instanceDataSize = k_MaxFramesInFlight * k_NumInstances * sizeof(ShaderTypes::InstanceData);
 
-    MTL::Function* vertexFunction = m_ShaderLibrary->newFunction(
-            NS::String::string("vertexMain", UTF8StringEncoding));
-    MTL::ArgumentEncoder* argEncoder = vertexFunction->newArgumentEncoder(0);
-    MTL::Buffer* argBuffer = m_Device->newBuffer(
-            argEncoder->encodedLength(),
-            MTL::ResourceStorageModeManaged);
-    m_ArgBuffer = argBuffer; // TODO: why not set it up directly on the member??
-
-    // Specify destination to which the encoder writes object references
-    argEncoder->setArgumentBuffer(m_ArgBuffer, 0);
-    argEncoder->setBuffer(m_VertexPositionsBuffer, 0, 0);
-    argEncoder->setBuffer(m_VertexColorsBuffer, 0, 1);
-
-    m_ArgBuffer->didModifyRange(NS::Range::Make(0, m_ArgBuffer->length()));
-
-    vertexFunction->release();
-    argEncoder->release();
+    // Initialize buffers for each instance
+    for (size_t i = 0; i < k_MaxFramesInFlight; ++i)
+    {
+        m_InstanceDataBuffer[i] = m_Device->newBuffer(instanceDataSize, MTL::ResourceStorageModeManaged);
+    }
 }
 
 struct FrameData
@@ -294,11 +290,14 @@ void Renderer::BuildFrameData()
 
 void Renderer::Draw(MTK::View* view)
 {
+    using simd::float4;
+    using simd::float4x4;
+
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
 
     // Use a different buffer each time to avoid race conditions between CPU and GPU
     m_Frame = (m_Frame + 1) % k_MaxFramesInFlight;
-    MTL::Buffer* frameDataBuffer = m_FrameData[m_Frame];
+    MTL::Buffer* instanceDataBuffer = m_InstanceDataBuffer[m_Frame];
 
     MTL::CommandBuffer* commandBuffer = m_CommandQueue->commandBuffer();
 
@@ -312,25 +311,49 @@ void Renderer::Draw(MTK::View* view)
         dispatch_semaphore_signal(renderer->m_Semaphore);
     });
 
-    // Overwrite buffer contents with a new value once it's safe to do so
-    reinterpret_cast<FrameData*>(frameDataBuffer->contents())->angle = m_Angle += 0.01f;
-    frameDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(FrameData)));
+    m_Angle += 0.01f;
+
+    const float scale = 0.1f;
+
+    // Update position and color of every instance
+    ShaderTypes::InstanceData* instanceData = reinterpret_cast<ShaderTypes::InstanceData*>(instanceDataBuffer->contents());
+    for (size_t i = 0; i < k_NumInstances; ++i)
+    {
+        float iDivNumInstances = i / (float)k_NumInstances;
+        float xOffset = (iDivNumInstances * 2.0f - 1.0f) + (1.0f / k_NumInstances);
+        float yOffset = sin((iDivNumInstances + m_Angle) * 2.0f * M_PI);
+
+        instanceData[i].InstanceTransform = (float4x4){ 
+            (float4){scale * sinf(m_Angle) , scale * cosf(m_Angle), 0.0f, 0.0f},
+            (float4){scale * cosf(m_Angle) , scale * -sinf(m_Angle), 0.0f, 0.0f},
+            (float4){0.0f, 0.0f, scale, 0.0f},
+            (float4){xOffset, yOffset, 0.f, 1.0f}
+        };
+
+        float r = iDivNumInstances;
+        float g = 1.0f - r;
+        float b = sinf(M_PI * 2.0f * iDivNumInstances);
+
+        instanceData[i].InstanceColor = (float4){ r, g, b, 1.0f };
+
+        instanceDataBuffer->didModifyRange(NS::Range::Make(0, instanceDataBuffer->length()));
+    }
+
     // Describes render targets and how they should be processed at the start and end of a render pass.
     MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
-    // No arguments to set for fragment, since it uses the output from the vertex stage
     encoder->setRenderPipelineState(m_RenderPipelineState);
+    encoder->setVertexBuffer(m_VertexDataBuffer, 0, 0);
+    encoder->setVertexBuffer(instanceDataBuffer, 0, 1);
 
-    // Make argument buffer available in the vertex shader, since it indirectly
-    // uses the vertex buffers through the vertexData argument buffer
-    encoder->setVertexBuffer(m_ArgBuffer, 0, 0);
-    encoder->useResource(m_VertexPositionsBuffer, MTL::ResourceUsageRead);
-    encoder->useResource(m_VertexColorsBuffer, MTL::ResourceUsageRead);
-    encoder->setVertexBuffer(frameDataBuffer, 0, 1);
-    encoder->drawPrimitives(
-            MTL::PrimitiveType::PrimitiveTypeTriangle,
-            NS::UInteger(0),
-            NS::UInteger(3));
+    encoder->drawIndexedPrimitives(
+            MTL::PrimitiveTypeTriangle,
+            6, 
+            MTL::IndexType::IndexTypeUInt16,
+            m_IndexBuffer,
+            0,
+            k_NumInstances); // Draw the object 32 times (or whatever the value in k_NumInstances is)
+
 
     encoder->endEncoding();
 
