@@ -3,7 +3,6 @@
 #include <Metal/Metal.hpp>
 #include <MetalKit/MetalKit.hpp>
 
-#include <simd/simd.h>
 #include <fstream>
 #include <string>
 #include <cassert>
@@ -16,19 +15,24 @@ class Renderer
         void BuildShaders();
         void BuildBuffers();
         void BuildFrameData();
+        void BuildDepthStencilStates();
         void Draw(MTK::View* view);
     private:
+        static constexpr int k_MaxFramesInFlight = 3;
+        static constexpr size_t k_NumInstances = 32;
+
         std::string ReadFile(const std::string& filepath);
 
         MTL::Device* m_Device;
         MTL::CommandQueue* m_CommandQueue;
         MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
+        MTL::DepthStencilState* m_DepthStencilState;
 
-        static constexpr size_t k_NumInstances = 32;
         MTL::Buffer* m_InstanceDataBuffer[k_NumInstances];
         MTL::Buffer* m_VertexDataBuffer;
         MTL::Buffer* m_IndexBuffer;
+        MTL::Buffer* m_CameraDataBuffer[k_MaxFramesInFlight];
         /* MTL::Buffer* m_ArgBuffer; */
         /* MTL::Buffer* m_VertexPositionsBuffer; */
         /* MTL::Buffer* m_VertexColorsBuffer; */
@@ -37,7 +41,6 @@ class Renderer
         float m_Angle;
         int m_Frame;
         dispatch_semaphore_t m_Semaphore;
-        static constexpr int k_MaxFramesInFlight = 3;
 
 };
 

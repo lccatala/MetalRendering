@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "math.h"
 
 MyAppDelegate::~MyAppDelegate()
 {
@@ -83,7 +84,9 @@ void MyAppDelegate::applicationDidFinishLaunching(NS::Notification* notification
 
     m_View = MTK::View::alloc()->init(frame, m_Device);
     m_View->setColorPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
-    m_View->setClearColor(MTL::ClearColor::Make(0.2, 0.6, 0.8, 1.0));
+    m_View->setClearColor(MTL::ClearColor::Make(0.1, 0.1, 0.1, 0.1));
+    m_View->setDepthStencilPixelFormat(MTL::PixelFormat::PixelFormatDepth16Unorm);
+    m_View->setClearDepth(1.0f);
 
     // Set a delegate object to issue commands to Metal
     m_ViewDelegate = new MyMTKViewDelegate(m_Device);
@@ -126,6 +129,7 @@ Renderer::Renderer(MTL::Device* device)
     m_CommandQueue = m_Device->newCommandQueue();
 
     BuildShaders();
+    BuildDepthStencilStates();
     BuildBuffers();
     /* BuildFrameData(); */
 
@@ -138,6 +142,7 @@ Renderer::~Renderer()
 {
     m_ShaderLibrary->release();
     m_VertexDataBuffer->release();
+    m_DepthStencilState->release();
     /* m_ArgBuffer->release(); */
     /* m_VertexPositionsBuffer->release(); */
     /* m_VertexColorsBuffer->release(); */
@@ -145,6 +150,7 @@ Renderer::~Renderer()
     {
         /* m_FrameData[i]->release(); */
         m_InstanceDataBuffer[i]->release();
+        m_CameraDataBuffer[i]->release(); // TODO: check why the sample does this in separate loops
     }
     m_IndexBuffer->release();
     m_RenderPipelineState->release();
@@ -158,6 +164,12 @@ namespace ShaderTypes
     {
         simd::float4x4 InstanceTransform;
         simd::float4 InstanceColor;
+    };
+
+    struct CameraData
+    {
+        simd::float4x4 PerspectiveTransform;
+        simd::float4x4 WorldTransform;
     };
 }
 
@@ -212,6 +224,7 @@ void Renderer::BuildShaders()
     descriptor->setVertexFunction(vertexFunction);
     descriptor->setFragmentFunction(fragmentFunction);
     descriptor->colorAttachments()->object(0)->setPixelFormat(MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
+    descriptor->setDepthAttachmentPixelFormat(MTL::PixelFormat::PixelFormatDepth16Unorm);
 
     // When creating a render pipeline state, it's configured to convert the fragment shader's 
     // output into the render target's pixel format. If we wanted to use another pixel format, 
@@ -231,6 +244,16 @@ void Renderer::BuildShaders()
     m_ShaderLibrary = library;
 }
 
+void Renderer::BuildDepthStencilStates() 
+{
+    MTL::DepthStencilDescriptor* descriptor = MTL::DepthStencilDescriptor::alloc()->init();
+    descriptor->setDepthCompareFunction(MTL::CompareFunction::CompareFunctionLess);
+    descriptor->setDepthWriteEnabled(true);
+
+    m_DepthStencilState = m_Device->newDepthStencilState(descriptor);
+    descriptor->release();
+}
+
 void Renderer::BuildBuffers()
 {
     using simd::float3;
@@ -241,12 +264,39 @@ void Renderer::BuildBuffers()
         { -s, -s, +s },
         { +s, -s, +s },
         { +s, +s, +s },
-        { -s, +s, +s }
+        { -s, +s, +s },
+
+        { -s, -s, -s },
+        { -s, +s, -s },
+        { +s, +s, -s },
+        { +s, -s, -s }
     };
 
     uint16_t indices[] = {
+        // Front
         0, 1, 2,
-        2, 3, 0
+        2, 3, 0,
+
+
+        // Right
+        1, 7, 6,
+        6, 2, 1,
+
+        // Back
+        7, 4, 5,
+        5, 6, 7,
+
+        // Left
+        4, 0, 3,
+        3, 5, 4,
+
+        // Top
+        3, 2, 6,
+        6, 5, 3,
+
+        // Bottom
+        4, 7, 1,
+        1, 0, 4
     };
 
     const size_t vertexDataSize = sizeof(verts);
@@ -271,6 +321,12 @@ void Renderer::BuildBuffers()
     {
         m_InstanceDataBuffer[i] = m_Device->newBuffer(instanceDataSize, MTL::ResourceStorageModeManaged);
     }
+
+    const size_t cameraDataSize = k_MaxFramesInFlight * sizeof(ShaderTypes::CameraData);
+    for (size_t i = 0; i < k_MaxFramesInFlight; ++i)
+    {
+        m_CameraDataBuffer[i] = m_Device->newBuffer(cameraDataSize, MTL::ResourceStorageModeManaged);
+    }
 }
 
 struct FrameData
@@ -290,6 +346,7 @@ void Renderer::BuildFrameData()
 
 void Renderer::Draw(MTK::View* view)
 {
+    using simd::float3;
     using simd::float4;
     using simd::float4x4;
 
@@ -317,38 +374,61 @@ void Renderer::Draw(MTK::View* view)
 
     // Update position and color of every instance
     ShaderTypes::InstanceData* instanceData = reinterpret_cast<ShaderTypes::InstanceData*>(instanceDataBuffer->contents());
+
+    float3 objectPosition = { 0.0f, 0.0f, -5.0f };
+
+    // Update instance positions
+    float4x4 rt = Math::Translate(objectPosition);
+    float4x4 rr = Math::RotationY(-m_Angle);
+    float4x4 rtInv = Math::Translate({ -objectPosition.x, -objectPosition.y, -objectPosition.z });
+    float4x4 fullObjectRotation = rt * rr * rtInv;
     for (size_t i = 0; i < k_NumInstances; ++i)
     {
         float iDivNumInstances = i / (float)k_NumInstances;
         float xOffset = (iDivNumInstances * 2.0f - 1.0f) + (1.0f / k_NumInstances);
         float yOffset = sin((iDivNumInstances + m_Angle) * 2.0f * M_PI);
 
-        instanceData[i].InstanceTransform = (float4x4){ 
-            (float4){scale * sinf(m_Angle) , scale * cosf(m_Angle), 0.0f, 0.0f},
-            (float4){scale * cosf(m_Angle) , scale * -sinf(m_Angle), 0.0f, 0.0f},
-            (float4){0.0f, 0.0f, scale, 0.0f},
-            (float4){xOffset, yOffset, 0.f, 1.0f}
-        };
+        // 3D transform of instance
+        float4x4 scaleMatrix = Math::Scale((float3){scale, scale, scale});
+        float4x4 rotationMatrixZ = Math::RotationZ(m_Angle);
+        float4x4 rotationMatrixY = Math::RotationY(m_Angle);
+        float4x4 translationMatrix = Math::Translate(Math::add(objectPosition, {xOffset, yOffset, 0.0f}));
+
+        instanceData[i].InstanceTransform = fullObjectRotation * translationMatrix * rotationMatrixY * rotationMatrixZ * scaleMatrix;
 
         float r = iDivNumInstances;
         float g = 1.0f - r;
         float b = sinf(M_PI * 2.0f * iDivNumInstances);
 
         instanceData[i].InstanceColor = (float4){ r, g, b, 1.0f };
-
-        instanceDataBuffer->didModifyRange(NS::Range::Make(0, instanceDataBuffer->length()));
     }
+
+    instanceDataBuffer->didModifyRange(NS::Range::Make(0, instanceDataBuffer->length()));
+
+    // Update camera state
+    MTL::Buffer* cameraDataBuffer = m_CameraDataBuffer[m_Frame];
+    ShaderTypes::CameraData* cameraData = reinterpret_cast<ShaderTypes::CameraData*>(cameraDataBuffer->contents());
+    cameraData->PerspectiveTransform = Math::Perspective(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
+    cameraData->WorldTransform = Math::Identity();
+    cameraDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(ShaderTypes::CameraData)));
+
+    // Begin render pass
 
     // Describes render targets and how they should be processed at the start and end of a render pass.
     MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
     encoder->setRenderPipelineState(m_RenderPipelineState);
+    encoder->setDepthStencilState(m_DepthStencilState);
     encoder->setVertexBuffer(m_VertexDataBuffer, 0, 0);
     encoder->setVertexBuffer(instanceDataBuffer, 0, 1);
+    encoder->setVertexBuffer(cameraDataBuffer, 0, 2);
+
+    encoder->setCullMode(MTL::CullModeBack);
+    encoder->setFrontFacingWinding(MTL::Winding::WindingCounterClockwise);
 
     encoder->drawIndexedPrimitives(
             MTL::PrimitiveTypeTriangle,
-            6, 
+            6 * 6, 
             MTL::IndexType::IndexTypeUInt16,
             m_IndexBuffer,
             0,
