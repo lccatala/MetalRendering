@@ -158,6 +158,8 @@ Renderer::~Renderer()
     m_Device->release();
 }
 
+// Structs for passing instance transform and color
+// and perspective and world transform matrices to the GPU
 namespace ShaderTypes
 {
     struct InstanceData
@@ -244,10 +246,16 @@ void Renderer::BuildShaders()
     m_ShaderLibrary = library;
 }
 
+// Ensure pixels closest to the camera are visible, 
+// independently of draw order
 void Renderer::BuildDepthStencilStates() 
 {
     MTL::DepthStencilDescriptor* descriptor = MTL::DepthStencilDescriptor::alloc()->init();
+
+    // Only draw fragments that are closer to the camera
     descriptor->setDepthCompareFunction(MTL::CompareFunction::CompareFunctionLess);
+
+    // Update each pixel's depth value for future comparisons
     descriptor->setDepthWriteEnabled(true);
 
     m_DepthStencilState = m_Device->newDepthStencilState(descriptor);
@@ -408,6 +416,8 @@ void Renderer::Draw(MTK::View* view)
     // Update camera state
     MTL::Buffer* cameraDataBuffer = m_CameraDataBuffer[m_Frame];
     ShaderTypes::CameraData* cameraData = reinterpret_cast<ShaderTypes::CameraData*>(cameraDataBuffer->contents());
+
+    // Apply perspective projection
     cameraData->PerspectiveTransform = Math::Perspective(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
     cameraData->WorldTransform = Math::Identity();
     cameraDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(ShaderTypes::CameraData)));
@@ -418,11 +428,15 @@ void Renderer::Draw(MTK::View* view)
     MTL::RenderPassDescriptor* descriptor = view->currentRenderPassDescriptor();
     MTL::RenderCommandEncoder* encoder = commandBuffer->renderCommandEncoder(descriptor);
     encoder->setRenderPipelineState(m_RenderPipelineState);
+
+    // Set depth stencil state and pass updated camera matrices to vertex shader
     encoder->setDepthStencilState(m_DepthStencilState);
     encoder->setVertexBuffer(m_VertexDataBuffer, 0, 0);
     encoder->setVertexBuffer(instanceDataBuffer, 0, 1);
     encoder->setVertexBuffer(cameraDataBuffer, 0, 2);
 
+    // Enable back face culing and set polygon winding order
+    // This avoids drawing the interior of geometry 
     encoder->setCullMode(MTL::CullModeBack);
     encoder->setFrontFacingWinding(MTL::Winding::WindingCounterClockwise);
 
@@ -432,7 +446,8 @@ void Renderer::Draw(MTK::View* view)
             MTL::IndexType::IndexTypeUInt16,
             m_IndexBuffer,
             0,
-            k_NumInstances); // Draw the object 32 times (or whatever the value in k_NumInstances is)
+            // Draw the object 32 times (or whatever the value in k_NumInstances is)
+            k_NumInstances); 
 
 
     encoder->endEncoding();
