@@ -89,4 +89,9 @@ namespace Math
                            (float4){0.0f, 0.0f, v.z, 0.0f},
                            (float4){0.0f, 0.0f, 0.0f, 1.0f});
     }
+
+    simd::float3x3 DiscardTranslation(const simd::float4x4& m) 
+    {
+        return simd_matrix(m.columns[0].xyz, m.columns[1].xyz, m.columns[2].xyz);
+    }
 }

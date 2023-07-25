@@ -19,7 +19,10 @@ class Renderer
         void Draw(MTK::View* view);
     private:
         static constexpr int k_MaxFramesInFlight = 3;
-        static constexpr size_t k_NumInstances = 32;
+        static constexpr size_t k_InstanceRows = 10;
+        static constexpr size_t k_InstanceCols = 10;
+        static constexpr size_t k_InstanceDepth = 10;
+        static constexpr size_t k_NumInstances = k_InstanceRows * k_InstanceCols * k_InstanceDepth;
 
         std::string ReadFile(const std::string& filepath);
 

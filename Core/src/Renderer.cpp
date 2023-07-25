@@ -71,7 +71,7 @@ void MyAppDelegate::applicationWillFinishLaunching(NS::Notification* notificatio
 
 void MyAppDelegate::applicationDidFinishLaunching(NS::Notification* notification)
 {
-    CGRect frame = (CGRect){{100.0, 100.0}, {512.0, 512.0}};
+    CGRect frame = (CGRect){ { 100.0, 100.0 }, { 1024.0, 1024.0 } };
 
     m_Window = NS::Window::alloc()->init(
             frame,
@@ -162,16 +162,24 @@ Renderer::~Renderer()
 // and perspective and world transform matrices to the GPU
 namespace ShaderTypes
 {
+    struct VertexData
+    {
+        simd::float3 Position;
+        simd::float3 Normal;
+    };
+
     struct InstanceData
     {
         simd::float4x4 InstanceTransform;
-        simd::float4 InstanceColor;
+        simd::float3x3 InstanceNormalTransform;
+        simd::float4   InstanceColor;
     };
 
     struct CameraData
     {
         simd::float4x4 PerspectiveTransform;
         simd::float4x4 WorldTransform;
+        simd::float3x3 WorldNormalTransform;
     };
 }
 
@@ -268,43 +276,46 @@ void Renderer::BuildBuffers()
 
     const float s = 0.5f;
 
-    float3 verts[] = {
-        { -s, -s, +s },
-        { +s, -s, +s },
-        { +s, +s, +s },
-        { -s, +s, +s },
+    ShaderTypes::VertexData verts[] = {
+        //   Positions          Normals
+        { { -s, -s, +s }, { 0.f,  0.f,  1.f } },
+        { { +s, -s, +s }, { 0.f,  0.f,  1.f } },
+        { { +s, +s, +s }, { 0.f,  0.f,  1.f } },
+        { { -s, +s, +s }, { 0.f,  0.f,  1.f } },
 
-        { -s, -s, -s },
-        { -s, +s, -s },
-        { +s, +s, -s },
-        { +s, -s, -s }
+        { { +s, -s, +s }, { 1.f,  0.f,  0.f } },
+        { { +s, -s, -s }, { 1.f,  0.f,  0.f } },
+        { { +s, +s, -s }, { 1.f,  0.f,  0.f } },
+        { { +s, +s, +s }, { 1.f,  0.f,  0.f } },
+
+        { { +s, -s, -s }, { 0.f,  0.f, -1.f } },
+        { { -s, -s, -s }, { 0.f,  0.f, -1.f } },
+        { { -s, +s, -s }, { 0.f,  0.f, -1.f } },
+        { { +s, +s, -s }, { 0.f,  0.f, -1.f } },
+
+        { { -s, -s, -s }, { -1.f, 0.f,  0.f } },
+        { { -s, -s, +s }, { -1.f, 0.f,  0.f } },
+        { { -s, +s, +s }, { -1.f, 0.f,  0.f } },
+        { { -s, +s, -s }, { -1.f, 0.f,  0.f } },
+
+        { { -s, +s, +s }, { 0.f,  1.f,  0.f } },
+        { { +s, +s, +s }, { 0.f,  1.f,  0.f } },
+        { { +s, +s, -s }, { 0.f,  1.f,  0.f } },
+        { { -s, +s, -s }, { 0.f,  1.f,  0.f } },
+
+        { { -s, -s, -s }, { 0.f, -1.f,  0.f } },
+        { { +s, -s, -s }, { 0.f, -1.f,  0.f } },
+        { { +s, -s, +s }, { 0.f, -1.f,  0.f } },
+        { { -s, -s, +s }, { 0.f, -1.f,  0.f } },
     };
 
     uint16_t indices[] = {
-        // Front
-        0, 1, 2,
-        2, 3, 0,
-
-
-        // Right
-        1, 7, 6,
-        6, 2, 1,
-
-        // Back
-        7, 4, 5,
-        5, 6, 7,
-
-        // Left
-        4, 0, 3,
-        3, 5, 4,
-
-        // Top
-        3, 2, 6,
-        6, 5, 3,
-
-        // Bottom
-        4, 7, 1,
-        1, 0, 4
+        0,  1,  2,  2,  3,  0, // Front
+        4,  5,  6,  6,  7,  4, // Right
+        8,  9, 10, 10, 11,  8, // Back
+        12, 13, 14, 14, 15, 12, // Left
+        16, 17, 18, 18, 19, 16, // Top
+        20, 21, 22, 22, 23, 20, // Bottom
     };
 
     const size_t vertexDataSize = sizeof(verts);
@@ -376,39 +387,61 @@ void Renderer::Draw(MTK::View* view)
         dispatch_semaphore_signal(renderer->m_Semaphore);
     });
 
-    m_Angle += 0.01f;
+    m_Angle += 0.02f;
 
-    const float scale = 0.1f;
+    const float scale = 0.2f;
 
     // Update position and color of every instance
     ShaderTypes::InstanceData* instanceData = reinterpret_cast<ShaderTypes::InstanceData*>(instanceDataBuffer->contents());
 
-    float3 objectPosition = { 0.0f, 0.0f, -5.0f };
+    float3 objectPosition = { 0.0f, 0.0f, -10.0f };
 
     // Update instance positions
     float4x4 rt = Math::Translate(objectPosition);
-    float4x4 rr = Math::RotationY(-m_Angle);
+
+    float4x4 rr0 = Math::RotationY(-m_Angle);
+    float4x4 rr1 = Math::RotationY(m_Angle * 0.5);
     float4x4 rtInv = Math::Translate({ -objectPosition.x, -objectPosition.y, -objectPosition.z });
-    float4x4 fullObjectRotation = rt * rr * rtInv;
+    float4x4 fullObjectRotation = rt * rr1 * rr0 * rtInv;
+
+    size_t ix = 0;
+    size_t iy = 0;
+    size_t iz = 0;
     for (size_t i = 0; i < k_NumInstances; ++i)
     {
-        float iDivNumInstances = i / (float)k_NumInstances;
-        float xOffset = (iDivNumInstances * 2.0f - 1.0f) + (1.0f / k_NumInstances);
-        float yOffset = sin((iDivNumInstances + m_Angle) * 2.0f * M_PI);
+        if (ix == k_InstanceRows)
+        {
+            ix = 0;
+            ++iy;
+        }
+        if (iy == k_InstanceRows)
+        {
+            iy = 0;
+            ++iz;
+        }
 
         // 3D transform of instance
         float4x4 scaleMatrix = Math::Scale((float3){scale, scale, scale});
-        float4x4 rotationMatrixZ = Math::RotationZ(m_Angle);
-        float4x4 rotationMatrixY = Math::RotationY(m_Angle);
-        float4x4 translationMatrix = Math::Translate(Math::add(objectPosition, {xOffset, yOffset, 0.0f}));
+        float4x4 rotationMatrixZ = Math::RotationZ(m_Angle * sinf((float)ix));
+        float4x4 rotationMatrixY = Math::RotationY(m_Angle * cosf((float)iy));
+
+        float x = ((float)ix - (float)k_InstanceRows/2.0f) * (2.0f * scale) + scale;
+        float y = ((float)iy - (float)k_InstanceCols/2.0f) * (2.0f * scale) + scale;
+        float z = ((float)iz - (float)k_InstanceDepth/2.0f) * (2.0f * scale) + scale;
+        float4x4 translationMatrix = Math::Translate(Math::add(objectPosition, { x, y, z }));
 
         instanceData[i].InstanceTransform = fullObjectRotation * translationMatrix * rotationMatrixY * rotationMatrixZ * scaleMatrix;
+        instanceData[i].InstanceNormalTransform = Math::DiscardTranslation(instanceData[i].InstanceTransform);
+
+        float iDivNumInstances = i / (float)k_NumInstances;
 
         float r = iDivNumInstances;
         float g = 1.0f - r;
         float b = sinf(M_PI * 2.0f * iDivNumInstances);
 
         instanceData[i].InstanceColor = (float4){ r, g, b, 1.0f };
+
+        ++ix;
     }
 
     instanceDataBuffer->didModifyRange(NS::Range::Make(0, instanceDataBuffer->length()));
@@ -420,6 +453,7 @@ void Renderer::Draw(MTK::View* view)
     // Apply perspective projection
     cameraData->PerspectiveTransform = Math::Perspective(45.0f * M_PI / 180.0f, 1.0f, 0.03f, 500.0f);
     cameraData->WorldTransform = Math::Identity();
+    cameraData->WorldNormalTransform = Math::DiscardTranslation(cameraData->WorldTransform);
     cameraDataBuffer->didModifyRange(NS::Range::Make(0, sizeof(ShaderTypes::CameraData)));
 
     // Begin render pass
