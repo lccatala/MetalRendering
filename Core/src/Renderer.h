@@ -16,6 +16,7 @@ class Renderer
         void BuildBuffers();
         void BuildFrameData();
         void BuildDepthStencilStates();
+        void BuildTextures();
         void Draw(MTK::View* view);
     private:
         static constexpr int k_MaxFramesInFlight = 3;
@@ -31,6 +32,7 @@ class Renderer
         MTL::Library* m_ShaderLibrary;
         MTL::RenderPipelineState* m_RenderPipelineState;
         MTL::DepthStencilState* m_DepthStencilState;
+        MTL::Texture* m_Texture;
 
         MTL::Buffer* m_InstanceDataBuffer[k_NumInstances];
         MTL::Buffer* m_VertexDataBuffer;

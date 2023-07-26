@@ -130,6 +130,7 @@ Renderer::Renderer(MTL::Device* device)
 
     BuildShaders();
     BuildDepthStencilStates();
+    BuildTextures();
     BuildBuffers();
     /* BuildFrameData(); */
 
@@ -140,6 +141,7 @@ Renderer::Renderer(MTL::Device* device)
 
 Renderer::~Renderer()
 {
+    m_Texture->release();
     m_ShaderLibrary->release();
     m_VertexDataBuffer->release();
     m_DepthStencilState->release();
@@ -166,6 +168,7 @@ namespace ShaderTypes
     {
         simd::float3 Position;
         simd::float3 Normal;
+        simd::float2 TextureCoordinates;
     };
 
     struct InstanceData
@@ -203,6 +206,46 @@ std::string Renderer::ReadFile(const std::string& filepath)
     }
 
     return result;
+}
+
+void Renderer::BuildTextures() 
+{
+    // Allocate memory for the texture
+    const uint32_t textureWidth = 128;
+    const uint32_t textureHeight = 128;
+
+    MTL::TextureDescriptor* textureDescriptor = MTL::TextureDescriptor::alloc()->init();
+    textureDescriptor->setWidth(textureWidth);
+    textureDescriptor->setHeight(textureHeight);
+    textureDescriptor->setPixelFormat(MTL::PixelFormatRGBA8Unorm);
+    textureDescriptor->setTextureType(MTL::TextureType2D);
+    textureDescriptor->setStorageMode(MTL::StorageModeManaged);
+    textureDescriptor->setUsage(MTL::ResourceUsageSample | MTL::ResourceUsageRead);
+
+    m_Texture = m_Device->newTexture(textureDescriptor);
+
+    // Generate checkerboard texture
+    uint8_t* textureData = (uint8_t*)alloca(textureWidth * textureHeight * 4);
+    for (size_t y = 0; y < textureHeight; ++y)
+    {
+        for (size_t x = 0; x < textureWidth; ++x)
+        {
+            bool isWhite = (x^y) & 0b1000000;
+            uint8_t c = isWhite ? 0xFF : 0xA;
+
+            size_t i = y * textureWidth + x;
+
+            textureData[i * 4 + 0] = c;
+            textureData[i * 4 + 1] = c;
+            textureData[i * 4 + 2] = c;
+            textureData[i * 4 + 3] = 0xFF;
+        }
+    }
+
+    // Copy generated data to the texture
+    m_Texture->replaceRegion(MTL::Region(0, 0, 0, textureWidth, textureHeight, 1), 0, textureData, textureWidth * 4);
+
+    textureDescriptor->release();
 }
 
 void Renderer::BuildShaders() 
@@ -272,41 +315,43 @@ void Renderer::BuildDepthStencilStates()
 
 void Renderer::BuildBuffers()
 {
+    using simd::float2;
     using simd::float3;
 
     const float s = 0.5f;
 
     ShaderTypes::VertexData verts[] = {
-        //   Positions          Normals
-        { { -s, -s, +s }, { 0.f,  0.f,  1.f } },
-        { { +s, -s, +s }, { 0.f,  0.f,  1.f } },
-        { { +s, +s, +s }, { 0.f,  0.f,  1.f } },
-        { { -s, +s, +s }, { 0.f,  0.f,  1.f } },
+        //                                         Texture
+        //   Positions           Normals         Coordinates
+        { { -s, -s, +s }, {  0.f,  0.f,  1.f }, { 0.f, 1.f } },
+        { { +s, -s, +s }, {  0.f,  0.f,  1.f }, { 1.f, 1.f } },
+        { { +s, +s, +s }, {  0.f,  0.f,  1.f }, { 1.f, 0.f } },
+        { { -s, +s, +s }, {  0.f,  0.f,  1.f }, { 0.f, 0.f } },
 
-        { { +s, -s, +s }, { 1.f,  0.f,  0.f } },
-        { { +s, -s, -s }, { 1.f,  0.f,  0.f } },
-        { { +s, +s, -s }, { 1.f,  0.f,  0.f } },
-        { { +s, +s, +s }, { 1.f,  0.f,  0.f } },
+        { { +s, -s, +s }, {  1.f,  0.f,  0.f }, { 0.f, 1.f } },
+        { { +s, -s, -s }, {  1.f,  0.f,  0.f }, { 1.f, 1.f } },
+        { { +s, +s, -s }, {  1.f,  0.f,  0.f }, { 1.f, 0.f } },
+        { { +s, +s, +s }, {  1.f,  0.f,  0.f }, { 0.f, 0.f } },
 
-        { { +s, -s, -s }, { 0.f,  0.f, -1.f } },
-        { { -s, -s, -s }, { 0.f,  0.f, -1.f } },
-        { { -s, +s, -s }, { 0.f,  0.f, -1.f } },
-        { { +s, +s, -s }, { 0.f,  0.f, -1.f } },
+        { { +s, -s, -s }, {  0.f,  0.f, -1.f }, { 0.f, 1.f } },
+        { { -s, -s, -s }, {  0.f,  0.f, -1.f }, { 1.f, 1.f } },
+        { { -s, +s, -s }, {  0.f,  0.f, -1.f }, { 1.f, 0.f } },
+        { { +s, +s, -s }, {  0.f,  0.f, -1.f }, { 0.f, 0.f } },
 
-        { { -s, -s, -s }, { -1.f, 0.f,  0.f } },
-        { { -s, -s, +s }, { -1.f, 0.f,  0.f } },
-        { { -s, +s, +s }, { -1.f, 0.f,  0.f } },
-        { { -s, +s, -s }, { -1.f, 0.f,  0.f } },
+        { { -s, -s, -s }, { -1.f,  0.f,  0.f }, { 0.f, 1.f } },
+        { { -s, -s, +s }, { -1.f,  0.f,  0.f }, { 1.f, 1.f } },
+        { { -s, +s, +s }, { -1.f,  0.f,  0.f }, { 1.f, 0.f } },
+        { { -s, +s, -s }, { -1.f,  0.f,  0.f }, { 0.f, 0.f } },
 
-        { { -s, +s, +s }, { 0.f,  1.f,  0.f } },
-        { { +s, +s, +s }, { 0.f,  1.f,  0.f } },
-        { { +s, +s, -s }, { 0.f,  1.f,  0.f } },
-        { { -s, +s, -s }, { 0.f,  1.f,  0.f } },
+        { { -s, +s, +s }, {  0.f,  1.f,  0.f }, { 0.f, 1.f } },
+        { { +s, +s, +s }, {  0.f,  1.f,  0.f }, { 1.f, 1.f } },
+        { { +s, +s, -s }, {  0.f,  1.f,  0.f }, { 1.f, 0.f } },
+        { { -s, +s, -s }, {  0.f,  1.f,  0.f }, { 0.f, 0.f } },
 
-        { { -s, -s, -s }, { 0.f, -1.f,  0.f } },
-        { { +s, -s, -s }, { 0.f, -1.f,  0.f } },
-        { { +s, -s, +s }, { 0.f, -1.f,  0.f } },
-        { { -s, -s, +s }, { 0.f, -1.f,  0.f } },
+        { { -s, -s, -s }, {  0.f, -1.f,  0.f }, { 0.f, 1.f } },
+        { { +s, -s, -s }, {  0.f, -1.f,  0.f }, { 1.f, 1.f } },
+        { { +s, -s, +s }, {  0.f, -1.f,  0.f }, { 1.f, 0.f } },
+        { { -s, -s, +s }, {  0.f, -1.f,  0.f }, { 0.f, 0.f } }
     };
 
     uint16_t indices[] = {
@@ -468,6 +513,7 @@ void Renderer::Draw(MTK::View* view)
     encoder->setVertexBuffer(m_VertexDataBuffer, 0, 0);
     encoder->setVertexBuffer(instanceDataBuffer, 0, 1);
     encoder->setVertexBuffer(cameraDataBuffer, 0, 2);
+    encoder->setFragmentTexture(m_Texture, 0);
 
     // Enable back face culing and set polygon winding order
     // This avoids drawing the interior of geometry 
